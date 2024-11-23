@@ -1,20 +1,21 @@
 google-api-python-client
 google-auth-httplib2 
 google-auth-oauthlib
+pydrive2
 
 pika
 httpx
 anyio
+requests
 
 python-dotenv
 
-pydrive2
 sentry_sdk
-simplegmail
+
 openai-whisper
 setuptools-rust
 tensorboard
 openai
 
 fuzzywuzzy
-requests
+elevenlabs
