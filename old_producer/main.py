@@ -13,12 +13,13 @@ class TasksProducerRPC:
         self.TASKS_QUANTITY = 0
         
         self.connection = pika.BlockingConnection(
-            pika.ConnectionParameters(os.environ.get("RABBITMQ_HOST"),
+            pika.ConnectionParameters(host=os.environ.get("RABBITMQ_HOST"),
                                       port=5672,
                                       credentials=pika.PlainCredentials(
                                             os.environ.get("RABBITMQ_USER"),
                                             os.environ.get("RABBITMQ_PASSWORD")
-                                      ))
+                                      ),
+                                      heartbeat=30,)
         )
         self.channel = self.connection.channel()
         
@@ -45,12 +46,12 @@ class TasksProducerRPC:
         self.channel.basic_publish(
             exchange="",
             routing_key="tasks",
-            body=json.dumps(task),
+            body=json.dumps(task), # Convierto el diccionario a un string JSON
             properties=pika.BasicProperties(
                 delivery_mode= pika.DeliveryMode.Persistent,
                 content_type="application/json",
-                reply_to= "callback",
-                correlation_id= task["ID"]
+                reply_to= "callback", # Nombre de la cola a la que se envia la confirmacion
+                correlation_id= task["ID"] # ID de la tarea para identificarla
             )
         )
         print(f"Sent {task['ID']}")

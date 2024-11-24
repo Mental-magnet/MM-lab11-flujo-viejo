@@ -3,6 +3,7 @@ import old_producer.main as old_producer
 import old_worker.main as old_worker
 import os
 import dotenv
+import utils.path as path
 
 sentry_sdk.init(
     dsn="https://c80fe5043d5f19b11fa4f5106e5d2651@o4507149535936512.ingest.us.sentry.io/4508338032541696",
@@ -17,7 +18,8 @@ sentry_sdk.init(
     environment="development"
 )
 
-dotenv.load_dotenv(".env")
+dotenv.load_dotenv(path.findFile(".env"),
+                   override=True)
 
 starts : dict = {
     "producer" : old_producer.start,
@@ -26,7 +28,11 @@ starts : dict = {
 
 def main():
     try:
-        starts[os.environ.get("MODE").lower()]()
+        mode = os.environ.get("MODE").lower()
+        
+        print(f"Starting {mode}...")
+        
+        starts[mode]()
     except KeyboardInterrupt:
         try:
             print("OS Exiting...")

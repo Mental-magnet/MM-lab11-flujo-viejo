@@ -26,8 +26,8 @@ class Audio():
         
         for voice in voices.voices:
             if self.voice.lower() in voice.name.lower():
-                print(f"Voice ID: {voice.voice_id} | Name: {voice.name}")
                 return voice.voice_id
+            anyio.sleep(0)
         
                                             
         
@@ -54,7 +54,7 @@ class Audio():
         
         return audio
     
-    async def saveAudio(self, clientID , index , text : str):
+    async def saveAudio(self, clientID , obj : dict[str , int | str],  listToSave : list[str] | None = None):
         """
         Guarda un archivo de audio a partir de un texto
         
@@ -66,18 +66,24 @@ class Audio():
         
         print(f"[WORKER]   Voz seleccionada: {voiceID}")
         
-        audio = await self.generateAudio(text , voiceID)
+        audio = await self.generateAudio(obj["text"] , voiceID)
         
-        print("[WORKER]   Audio generado")
+        print(f"[WORKER]   Audio generado {clientID}({obj['fileID']})")
         
-        pathToSave = path.findFile(f"audios/{clientID}({index}).mp3")
+        pathToSave = path.findFile(f"audios/{clientID}({obj['fileID']}).mp3")
         
-        async with await anyio.open_file(pathToSave, "ab") as file:
+        async with await anyio.open_file(pathToSave, "wb") as file:
             async for chunk in audio:
                 await file.write(chunk)
         
-        print(f"[WORKER]   Audio guardado en {pathToSave}")
-             
+        print(f"[WORKER]   Audio guardado en {pathToSave}\n")
+        
+        if listToSave is not None:
+            listToSave.append({
+                **obj,
+                "path" : pathToSave
+            })
+            
         return pathToSave
     
     
@@ -89,7 +95,7 @@ if __name__ == "__main__":
     
     async def main():
         audio = Audio()
-
+    
         async with anyio.create_task_group() as tg:
             tg.start_soon(audio.saveAudio , "test" , "00" , "Hola, este es un mensaje de prueba")
     

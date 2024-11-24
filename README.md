@@ -27,4 +27,21 @@ OLD_PRODUCER_PRODUCT = "test" # El producto del creador como en Lab11
 OLD_WORKER_EDITOR = "lab11" # Este refiere al editor como en el excel
 
 OLD_SERVER_URL = "localhost:8000" # ip:port del servidor de lab11
+
+GMAIL_IMPERSONATE_EMAIL = "xxxx@xxxxx.xxx"
+
+ELEVENLABS_API_KEY = "XXXXXX" # Cambiar por la api key de elevenlabs
+ELEVENLABS_VOICE_NAME = "XXXXX" # Cambiar por el nombre de la voz de elevenlabs
+ELEVENLABS_VOICE_MODEL = "eleven_turbo_v2_5"
+ELEVENLABS_STABILITY = 1
+ELEVENLABS_SIMILARITY = 1
+ELEVENLABS_STYLE = 0
+ELEVENLABS_SPEAKER_BOOST = 1
+
+WHISPER_MODEL = "small"
 ```
+
+# Requerimentos de SO
+
+## FFMPEG
+sudo apt update && sudo apt install ffmpeg
