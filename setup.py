@@ -4,6 +4,7 @@ import old_worker.main as old_worker
 import os
 import dotenv
 import utils.path as path
+import asyncio
 
 sentry_sdk.init(
     dsn="https://c80fe5043d5f19b11fa4f5106e5d2651@o4507149535936512.ingest.us.sentry.io/4508338032541696",

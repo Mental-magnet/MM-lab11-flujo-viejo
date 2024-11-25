@@ -1,19 +1,27 @@
 import json
 import os
 
-import anyio
 import pika
 import pika.channel
 import pika.frame
 
+import dtos.worker_task_dto
 import old_worker.audio as audio
 import old_worker.email as email
 import old_worker.whisp as whisp
+import utils.path as path
 
+import shutil
+
+import functools
+
+import anyio
+
+import dtos.worker_task_dto as DTOS
 
 class TasksWorkerRPC():
     def __init__(self) -> None:
-        print("[WORKER]   Starting...")
+        print("[WORKER]   Empezando...")
         self.connection = pika.BlockingConnection(
             pika.ConnectionParameters(os.environ.get("RABBITMQ_HOST"),
                                       port=5672,
@@ -27,30 +35,37 @@ class TasksWorkerRPC():
         
         # Declaro la cola de tareas, si no existe la crea y si existe no hace nada
         self.channel.queue_declare(queue="tasks", durable=True)
-        print("[WORKER]   Queue 'tasks' declared\n")
+        print("[WORKER]   Queue 'tasks' declarado\n")
         
         # Seteo la cantidad de tareas que se pueden enviar a un worker,
-        self.channel.basic_qos(prefetch_size=0,prefetch_count=1)
+        self.channel.basic_qos(prefetch_count=1)
         
         self.channel.basic_consume(queue="tasks",
-                                   on_message_callback=self.onRequest,
+                                   on_message_callback=TasksWorkerRPC.wrapperSync(self.onRequest),
                                    auto_ack=False)
-        print("[WORKER]   basic_consume declared\n")
+        print("[WORKER]   basic_consume declarado\n")
         
         self.emailService = email.Gmail()
-        print("[WORKER]   Email service declared\n")
+        print("[WORKER]   Email service declarado\n")
         
         self.audioService = audio.Audio()
-        print("[WORKER]   Audio service declared\n")
+        print("[WORKER]   Audio service declarado\n")
         
         self.whispService = whisp.Whisp()
-        print("[WORKER]   Whisp service declared\n")
+        print("[WORKER]   Whisp service declarado\n")
         
+        self.generations = []
+    
+    @staticmethod
+    def wrapperSync(f):
+        @functools.wraps(f)
+        def wrapper(*args, **kwargs):
+            return anyio.run(f, *args, **kwargs)
         
-        self.generations : list[str] = []
-        self.whispResults : list[dict] = []
-        
-    def onRequest(self, ch : pika.channel.Channel , method : pika.frame.Method , properties, body : bytes):
+        return wrapper
+            
+    
+    async def onRequest(self, ch : pika.channel.Channel , method : pika.frame.Method , properties, body : bytes | str):
         """
         Funcion que se ejecuta cuando se recibe una tarea
         
@@ -61,72 +76,113 @@ class TasksWorkerRPC():
             body (bytes): Cuerpo del mensaje
         """
         
-        data = json.loads(body)
+        data : DTOS.TaskDTO = json.loads(body)
         
-        print(f"[WORKER]   Received {data}\n")
+        print(f"[WORKER]   Recibido {data}\n")
         
-        processedData = anyio.run(self.asyncOnRequest,  data)
+        processedData = await self.processALL(data) # Procesamos la tarea
         
-        print(f"[WORKER]   Processed {processedData}\n")
+        print(f"[WORKER]   ZIP generado {processedData}\n")
         
-        self.channel.basic_publish(
-            exchange="",
-            routing_key="callback",
-            body=json.dumps(processedData)
-        )
+        
+        self.connection.process_data_events(time_limit=0)
+        with open(processedData , "rb") as file:
+            self.channel.basic_publish(
+                exchange="",
+                routing_key="callback",
+                properties=pika.BasicProperties(
+                    delivery_mode= pika.DeliveryMode.Persistent,
+                    content_type="application/zip", # Tipo de contenido
+                    headers= {
+                        "ID" : data["ID"],
+                    }
+                    ),
+                body=file.read()
+            )
+
         ch.basic_ack(delivery_tag=method.delivery_tag)
         
-        self.generations = []
+        print(f"[WORKER]   Enviado {processedData}\n")
         
-        print(f"[WORKER]   Sent {processedData}\n")
+        shutil.rmtree(path.findFile("audios")) # Borramos la carpeta audios
+        
+        os.mkdir(path.findFile("audios")) # Creamos la carpeta audios
+        
+        os.unlink(processedData) # Borramos el archivo ZIP
+        
+        self.connection.process_data_events(time_limit=0)
     
-    async def whispSomething(self , generations : list[str]) -> None:
+    def whispSomething(self , generations : list[str]) -> list[dict[str , str | int]]:
         """
-        Whisper something
+        Ejecutamos el servicio de whisper para cada generacion
         """
         print("[WORKER]   Whispering...\n")
         
+        whispResults = []
+        
         for obj in generations:
-            result = await self.whispService.whisperThis(
+            result = self.whispService.whisperThis(
                                                    obj["path"],
                                                    obj["text"]
                                                    )
 
             if result["ratio"] < 90:
-                result["path"] = obj["path"]
-                
                 raise Exception(f"El ratio de coincidencia es menor a 90: {result}")
             
-            self.connection.process_data_events(time_limit=0)
+            self.connection.process_data_events(time_limit=0) # Para evitar que se cierre la conexion
             
-            self.whispResults.append(result)
-            
-        print(self.whispResults)
-        print("[WORKER]   All audios saved\n")
-    
-    async def asyncOnRequest(self, body : dict[str , str | int]):
+            whispResults.append(result)
         
-        texts = self.emailService.getTextsFromTask(body["ID"] , body["EMAIL"])
+        print("[WORKER]   Todos los audios guardados\n")
+        
+        return whispResults
+    
+    @staticmethod
+    def zipIt(ID : str):
+        """
+        Comprime los archivos de audio
+        """
+        archive = shutil.make_archive(base_name=ID,
+                            format="zip",
+                            root_dir=path.findFile("audios"))
+        
+        return archive
+    
+    async def processALL(self, body : dict[str , str | int]):
+        
+        texts = self.emailService.getTextsFromTask(body["ID"],
+                                                   body["EMAIL"])
+        
+        self.connection.process_data_events(time_limit=0)
         
         toGenerate = [{"id" : i + 1,
                        "fileID" : f"{(i+1) // 10}{(i + 1) % 10}",
                        "text" : text} 
-                       for i , text in enumerate(texts)]
+                       for i , text in enumerate(texts[:-1])]
+        
+        self.generations = []
         
         async with anyio.create_task_group() as tg:
             
             for obj in toGenerate:
                 tg.start_soon(self.audioService.saveAudio , body["ID"] , obj , self.generations)
         
-        async with anyio.create_task_group() as tg:
-            generationsOrdered = sorted(self.generations , key=lambda x: x["id"])
+        generationsOrdered = sorted(self.generations , key=lambda x: x["id"])
         
-            tg.start_soon(self.whispSomething , generationsOrdered)
+        self.whispSomething(generationsOrdered)
+        
+        archive = TasksWorkerRPC.zipIt(body["ID"])
+        
+        self.emailService.markAsFinished(texts[-1]["emailID"])
 
-        return body
+        print(f"[WORKER]   ZIP generado {archive}\n")
+        
+        return archive
+    
+        
         
     def start(self):
-        print("[WORKER]   Worker started\n")
+        print("[WORKER]   Worker funcionando\n")
         self.channel.start_consuming()
         
         

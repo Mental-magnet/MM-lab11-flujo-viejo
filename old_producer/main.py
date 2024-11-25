@@ -6,6 +6,7 @@ import json
 import pika.channel
 import pika.frame
 
+import time
 
 class TasksProducerRPC:
     def __init__(self):
@@ -38,8 +39,23 @@ class TasksProducerRPC:
                                    on_message_callback=self.onResponse,
                                    auto_ack=True)
         
-    def onResponse(self, ch : pika.channel , method : pika.frame.Method , properties, body):
-        print(f"Received {json.loads(body)}")
+    def onResponse(self, ch : pika.channel , method : pika.frame.Method , properties, body : bytes):
+        
+        print(type(body))
+        
+        # skipcq: PTC-W6004
+        httpx.post(
+            url=f"http://{os.environ.get('OLD_SERVER_URL')}/tasks/submit",
+            content= body,
+            headers={
+                "Content-Type": "application/zip",
+                "IdClient" : properties.headers["ID"],
+                "product" : os.environ.get("OLD_PRODUCER_PRODUCT")
+            }
+        )
+
+        print(f"[PRODUCER]   Task {properties.correlation_id} completed")
+        
         self.TASKS_QUANTITY -= 1
         
     def send_task(self, task: dict):
@@ -57,6 +73,9 @@ class TasksProducerRPC:
         print(f"Sent {task['ID']}")
         self.TASKS_QUANTITY += 1
     
+    def processDataEvents(self):
+        self.connection.process_data_events(time_limit=0)
+    
     def wait(self):
         """
         Espera a que todas las tareas sean completadas
@@ -67,24 +86,42 @@ class TasksProducerRPC:
     def close(self):
         self.connection.close()
 
+def waitTwoMinutes(rpc : TasksProducerRPC):
+    timeEnd = time.time() + 120
+    
+    while time.time() < timeEnd:
+        
+        rpc.processDataEvents()
+        
+
 def start():
     
     rpc = TasksProducerRPC()
     
     while True:
-    
+        
+        print("[PRODUCER]   Querying tasks...")
+        
         # Busco las tareas en el servidor viejo
         response = httpx.get(
             f"http://{os.environ.get("OLD_SERVER_URL")}/tasks/search/{os.environ.get("OLD_PRODUCER_PRODUCT")}?editor={os.environ.get('OLD_WORKER_EDITOR').upper()}&offset=10"
             )
+            
+        tasks = response.json()
         
-        if response.is_success:
-            tasks = response.json()
-            for task in tasks:
-                rpc.send_task(task)
+        if type(tasks) != list:  # noqa: E721
+            print("[PRODUCER]   No tasks found, retrying in 2 minutes")
+            
+            waitTwoMinutes(rpc)
+            
+            continue
+        
+        print(f"[PRODUCER]   Found {len(tasks)} tasks")
+        
+        for task in tasks:
+            rpc.send_task(task)
                 
         rpc.wait()
-        print("All tasks completed")
-        break
+        print("[PRODUCER]   All tasks completed, querying again...")
     
     rpc.close()

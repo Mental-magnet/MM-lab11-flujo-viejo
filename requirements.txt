@@ -19,5 +19,3 @@ openai
 
 fuzzywuzzy
 python-Levenshtein
-
-elevenlabs

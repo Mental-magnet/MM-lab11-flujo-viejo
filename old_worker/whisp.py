@@ -13,7 +13,7 @@ class Whisp():
         )
 
     
-    async def whisperThis(self , audioPath : str , originalText : str) -> int:
+    def whisperThis(self , audioPath : str , originalText : str) -> dict[str , str | int]:
         """
         Transcribe un audio a partir de un texto
         Y compara el texto con el texto original
@@ -34,5 +34,6 @@ class Whisp():
         return {
             "original" : originalText,
             "transcription" : transcription["text"],
-            "ratio" : ratio
+            "ratio" : ratio,
+            "path" : audioPath
         }

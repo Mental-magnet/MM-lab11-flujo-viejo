@@ -15,6 +15,8 @@ class Gmail():
                                               "v1",
                                               credentials=credentials_delegated
                                               )
+        
+        self.labelFinished = self.getLabels()
     
     @staticmethod
     def generateCredentials() -> service_account.Credentials:
@@ -32,14 +34,16 @@ class Gmail():
                                                                             )
         return credentials
     
+    
     @staticmethod
     def testCredentials():
         credentials = Gmail.generateCredentials()
         
         if not credentials:
-            print("[WORKER][GMAIL]   Credentials not found\n")
+            raise Exception("[WORKER][GMAIL]   No se encontraron las credenciales")
             
         print("[WORKER][GMAIL]   Credentials found\n")
+    
     
     @staticmethod
     def handleMultipart(message : dict[str , str]) -> str:
@@ -54,8 +58,9 @@ class Gmail():
             if part["mimeType"] == "text/plain":
                 return base64.urlsafe_b64decode(part["body"]["data"]).decode("utf-8")
     
+    
     @staticmethod
-    def parseDecodedMessage(decodedMessage : str) -> str:
+    def parseDecodedMessage(decodedMessage : str) -> list[str]:
         texts = []
         
         # Encuentra los textos entre llaves o parentesis
@@ -63,6 +68,7 @@ class Gmail():
             texts.append(match)
             
         return texts
+         
          
     def getTextsFromTask(self, taskID : str , taskMail : str) -> list[str]:
         """
@@ -77,8 +83,14 @@ class Gmail():
                                                         q=f"subject:{taskID} AND subject:{taskMail} newer_than:7d AND NOT label:En-Proceso OR label:Finalizado",
                                                         ).execute()
         
+        # ? Si no se encuentra el mensaje...
+        try:
+            messages["messages"]
+        except KeyError:
+            raise Exception(f"[WORKER][GMAIL]   No se encontraron mensajes con el ID {taskID}")
+        
         if len(messages["messages"]) > 1:
-            raise Exception(f"El mensaje {taskID} tiene mas de un mensaje")
+            raise Exception(f"[WORKER][GMAIL]   El mensaje {taskID} tiene mas de un mensaje")
         
         message = self.service.users().messages().get(userId="me",
                                                    id=messages["messages"][0]["id"]).execute()
@@ -93,17 +105,57 @@ class Gmail():
                 decodedMessage = Gmail.handleMultipart(message["payload"])
                 texts = Gmail.parseDecodedMessage(decodedMessage)
                 
+                print(f"[WORKER][GMAIL]   emailID: {message["id"]}\n")
+                
+                texts.append(
+                    {
+                        "emailID" : message["id"]
+                    }
+                )
+                
                 return texts
                 
             
-            raise Exception(f"El mensaje {taskID} no es de tipo texto plano")
+            raise Exception(f"[WORKER][GMAIL]   El mensaje {taskID} no es de tipo texto plano")
             
             
         decodedMessage = base64.urlsafe_b64decode(message["payload"]["body"]["data"]).decode("utf-8")
         
         texts = Gmail.parseDecodedMessage(decodedMessage)
         
-        return texts
+        print(f"[WORKER][GMAIL]   emailID: {message["id"]}\n")
+        
+        texts.append(
+                {
+                    "emailID" : message["id"]
+                }
+            )
+        
+        return texts # el ultimo elemento es el ID del correo
+    
+    def getLabels(self):
+        """
+        Obtiene los labels de la cuenta
+        """
+        
+        for label in self.service.users().labels().list(userId="me").execute()["labels"]:
+            if label["name"].lower() == "finalizado":
+                return label["id"]
+                
+     
+    def markAsFinished(self , mailID : str):
+        """
+        Marca un correo con el label de Finalizado
+        
+        Args:
+            mailID (str): ID del correo
+        """
+        self.service.users().messages().modify(userId="me",
+                                               id=mailID,
+                                               body={
+                                                   "addLabelIds" : [self.labelFinished]
+                                               }).execute()
+    
 if __name__ == "__main__":
     import dotenv
     dotenv.load_dotenv(".env")
